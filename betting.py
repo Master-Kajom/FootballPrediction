@@ -18,6 +18,22 @@ arsenal_away_goals = [1.8, 2.0, 1.5, 1.2, 1.7]  # Last 5 away matches
 man_utd_home_conceded = [0.8, 1.2, 1.0, 0.5, 1.0]  # Last 5 home matches
 arsenal_away_conceded = [0.9, 0.7, 1.1, 1.3, 0.8]  # Last 5 away matches
 
+# Enhanced Head-to-Head (H2H) data
+# Format: [Most recent to least recent]
+# 1 = Win, 0.5 = Draw, 0 = Loss
+
+# Overall H2H (last 5 matches, any venue)
+h2h_results = [1, 0, 0.5, 0, 1]  # Last 5 matches between the teams
+h2h_avg = np.mean(h2h_results)
+
+# Home/Away specific H2H for Man Utd (when playing at home)
+man_utd_home_h2h = [1, 0, 1, 0, 1]  # Last 5 home matches vs Arsenal
+man_utd_home_h2h_avg = np.mean(man_utd_home_h2h)
+
+# Home/Away specific H2H for Arsenal (when playing away)
+arsenal_away_h2h = [0, 0.5, 1, 0, 1]  # Last 5 away matches vs Man Utd
+arsenal_away_h2h_avg = np.mean(arsenal_away_h2h)
+
 # Calculate form metrics
 man_utd_form_avg = np.mean(man_utd_form)
 arsenal_form_avg = np.mean(arsenal_form)
@@ -26,10 +42,11 @@ arsenal_attack_strength = np.mean(arsenal_away_goals) / np.mean(man_utd_home_goa
 man_utd_defense_strength = np.mean(man_utd_home_conceded) / np.mean(man_utd_home_conceded + arsenal_away_conceded)
 arsenal_defense_strength = np.mean(arsenal_away_conceded) / np.mean(man_utd_home_conceded + arsenal_away_conceded)
 
-# Create features and target
+# Create features and target with enhanced H2H data
 X = np.array([
     [man_utd_form_avg, arsenal_form_avg, man_utd_attack_strength, 
-     arsenal_attack_strength, man_utd_defense_strength, arsenal_defense_strength]
+     arsenal_attack_strength, man_utd_defense_strength, arsenal_defense_strength,
+     h2h_avg, man_utd_home_h2h_avg, arsenal_away_h2h_avg]  # Added H2H features
 ])
 
 # Scale features
@@ -39,13 +56,15 @@ X_scaled = scaler.fit_transform(X)
 # Load pre-trained model (in a real scenario, this would be pre-trained on historical data)
 def create_model():
     model = keras.Sequential([
-        layers.Dense(64, activation='relu', input_shape=(6,)),
+        layers.Dense(64, activation='relu', input_shape=(9,)),  # Updated input_shape to 9
         layers.Dropout(0.3),
         layers.Dense(32, activation='relu'),
         layers.Dropout(0.2),
         layers.Dense(3, activation='softmax')  # 3 outputs: Home Win, Draw, Away Win
     ])
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer='adam',
+                loss='categorical_crossentropy',
+                metrics=['accuracy'])
     return model
 
 # Create and compile model
@@ -70,6 +89,19 @@ arsenal_goal_prob = arsenal_expected_goals / (man_utd_expected_goals + arsenal_e
 
 # Print results
 print("\n--- Match Prediction: Manchester United vs Arsenal ---")
+
+print("\nOverall Head-to-Head (Last 5 matches):")
+print(f"Man Utd Wins: {h2h_results.count(1)}")
+print(f"Draws: {h2h_results.count(0.5)}")
+print(f"Arsenal Wins: {h2h_results.count(0)}")
+print(f"H2H Performance Index: {h2h_avg*100:.1f}%")
+
+print("\nVenue-Specific Head-to-Head:")
+print(f"Man Utd at Home vs Arsenal (Last 5): {man_utd_home_h2h.count(1)}W-{man_utd_home_h2h.count(0.5)}D-{man_utd_home_h2h.count(0)}L")
+print(f"Arsenal Away vs Man Utd (Last 5): {arsenal_away_h2h.count(1)}W-{arsenal_away_h2h.count(0.5)}D-{arsenal_away_h2h.count(0)}L")
+print(f"Man Utd Home H2H Performance: {man_utd_home_h2h_avg*100:.1f}%")
+print(f"Arsenal Away H2H Performance: {arsenal_away_h2h_avg*100:.1f}%")
+
 print("\nTeam Statistics:")
 print(f"Man Utd (Home) - Form: {man_utd_form_avg*100:.1f}%, "
       f"Avg Goals Scored: {np.mean(man_utd_home_goals):.2f}, "
