@@ -72,7 +72,8 @@ def get_team_id(team_name: str, competition_code: str = 'PL') -> Optional[int]:
     print(f"Team '{team_name}' not found in competition '{competition_code}' or general search.")
     return None
 
-def get_head_to_head(home_team: str, away_team: str) -> Dict:
+
+def get_head_to_head(home_team: str, away_team: str, competition: str,competitionId: int) -> Dict:
     """
     Get head-to-head statistics between two teams
     
@@ -85,8 +86,8 @@ def get_head_to_head(home_team: str, away_team: str) -> Dict:
     """
     try:
         # First, get team IDs
-        home_id = get_team_id(home_team)
-        away_id = get_team_id(away_team)
+        home_id = get_team_id(home_team, competition)
+        away_id = get_team_id(away_team, competition)
         
         if not home_id or not away_id:
             print(f"Could not find IDs for one or both teams: {home_team}, {away_team}")
@@ -125,7 +126,7 @@ def get_head_to_head(home_team: str, away_team: str) -> Dict:
         h2h_url = f"{BASE_URL}matches/{match_id}/head2head"
         h2h_params = {
             'limit': 10,
-            'competitions': '2021'  # Get last 10 meetings
+            'competitions': competitionId #get_competition_id(competition)  # Get last 10 meetings
         }
         
         print(f"Requesting URL: {h2h_url}")

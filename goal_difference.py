@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 import requests
 #from dotenv import load_dotenv
 
@@ -12,7 +12,7 @@ API_KEY = '0eabd7aff1954618968f10525f1c1c1d'
 BASE_URL = 'https://api.football-data.org/v4/'
 HEADERS = {'X-Auth-Token': API_KEY}
 
-def get_team_goal_differences(competition_code: str, season: int) -> Dict[str, Dict[str, int]]:
+def get_team_goal_differences(competition_code: str, season: int, competitionId: int) -> Dict[str, Dict[str, int]]:
     """
     Calculate goal differences for all teams in a specific league and season.
     
@@ -26,9 +26,10 @@ def get_team_goal_differences(competition_code: str, season: int) -> Dict[str, D
     print(f"\n=== DEBUG: Getting goal differences for {competition_code} season {season-1}-{season%100} ===")
     
     # Get all matches for the competition and season
-    matches_url = f"{BASE_URL}competitions/{competition_code}/matches"
+    competition_id = competitionId #get_competition_id(competition_code)
+    matches_url = f"{BASE_URL}competitions/{competition_id}/matches"
     params = {
-        'dateFrom': '2025-08-14',
+        'dateFrom': '2025-08-01',
         'dateTo': '2025-08-29',
         'status': 'FINISHED'
     }
@@ -117,7 +118,7 @@ def get_team_goal_differences(competition_code: str, season: int) -> Dict[str, D
         return {}
 
 def get_teams_goal_difference(competition_code: str, season: int, 
-                             home_team: str, away_team: str) -> Tuple[Dict, Dict]:
+                             home_team: str, away_team: str, competitionId: int = 2021) -> Tuple[Dict, Dict]:
     """
     Get goal difference for specific home and away teams.
     
@@ -132,7 +133,7 @@ def get_teams_goal_difference(competition_code: str, season: int,
     """
     print(f"\n=== DEBUG: Getting goal differences for {home_team} (H) vs {away_team} (A) ===")
     
-    team_stats = get_team_goal_differences(competition_code, season)
+    team_stats = get_team_goal_differences(competition_code, season, competitionId)
     
     # Get stats for the requested teams
     home_stats = team_stats.get(home_team, {'goalDifference': 0, 'goalsFor': 0, 

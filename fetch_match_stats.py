@@ -48,7 +48,7 @@ def safe_request(url: str, max_retries: int = 3) -> Optional[dict]:
     
     return None
 
-def get_team_id(team_name: str, competition_code: str = 'PL') -> Optional[int]:
+def get_team_id(team_name: str, competition_code: str = 'PL', competitionId: int = 2021) -> Optional[int]:
     """Get team ID by name using competition-based search first"""
     # Try to find in specified competition first (e.g., PL for Premier League)
     if competition_code:
@@ -72,12 +72,12 @@ def get_team_id(team_name: str, competition_code: str = 'PL') -> Optional[int]:
     print(f"Team '{team_name}' not found in competition '{competition_code}' or general search.")
     return None
 
-def get_team_matches(team_id, status='FINISHED', limit=10):
+def get_team_matches(team_id, status='FINISHED', limit=10, competitionId: int = 2021):
     """Get recent matches for a team"""
     url = f"{BASE_URL}teams/{team_id}/matches"
     print(f"\n=== DEBUG: Fetching matches from URL: {url} ===")
     params = {
-        'competitions': '2021',
+        'competitions': competitionId,
         'dateFrom': '2025-03-01',
         'dateTo': '2025-08-29',
         #'limit': 15
@@ -154,23 +154,23 @@ def analyze_matches(matches, team_id, is_home_team=True):
     
     return stats
 
-def get_match_stats(home_team: str, away_team: str, competition_code: str = 'PL'):
+def get_match_stats(home_team: str, away_team: str, competition_code: str = 'PL', competitionId: int = 2021):
     """Get match statistics for two teams in a specific competition"""
     print(f"Fetching data for {home_team} (home) vs {away_team} (away) in competition {competition_code}...\n")
     
     # Get team IDs with competition code
-    home_id = get_team_id(home_team, competition_code)
-    away_id = get_team_id(away_team, competition_code)
+    home_id = get_team_id(home_team, competition_code,competitionId)
+    away_id = get_team_id(away_team, competition_code,competitionId)
     
     if not home_id or not away_id:
         return None, None
     
     # Get recent matches for home team (home matches only)
-    home_team_matches = get_team_matches(home_id, limit=20)  # Get more matches to find 5 home games
+    home_team_matches = get_team_matches(home_id, limit=20, competitionId=competitionId)  # Get more matches to find 5 home games
     home_stats = analyze_matches(home_team_matches, home_id, is_home_team=True)
     
     # Get recent matches for away team (away matches only)
-    away_team_matches = get_team_matches(away_id, limit=20)  # Get more matches to find 5 away games
+    away_team_matches = get_team_matches(away_id, limit=20,competitionId=competitionId)  # Get more matches to find 5 away games
     away_stats = analyze_matches(away_team_matches, away_id, is_home_team=False)
     
     return home_stats, away_stats

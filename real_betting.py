@@ -6,6 +6,7 @@ import tensorflow as tf
 from datetime import datetime
 from typing import Dict, Tuple, Optional
 import math
+import requests
 
 # ML and Data Processing
 from sklearn.preprocessing import MinMaxScaler
@@ -21,7 +22,7 @@ import seaborn as sns
 # Local imports
 from config import (
     DEFAULT_COMPETITION, CURRENT_SEASON,
-    normalize_team_name, safe_request, API_KEY
+    normalize_team_name, safe_request, API_KEY, BASE_URL, HEADERS
 )
 from fetch_match_stats import get_match_stats, analyze_matches
 from fetch_head_to_head import get_head_to_head
@@ -41,13 +42,13 @@ PREDICTION_HISTORY = 'prediction_history.csv'
 
 # Feature Engineering Functions
 
-def get_team_form_data(home_team: str, away_team: str, competition: str = COMPETITION) -> Tuple[Dict, Dict]:
+def get_team_form_data(home_team: str, away_team: str, competition: str = COMPETITION, competitionId: int = 2021) -> Tuple[Dict, Dict]:
     """Get form data for both teams"""
     print(f"\nFetching form data for {home_team} vs {away_team}...")
     
     # Get match stats for both teams
     print(f"\n=== DEBUG: Getting match stats for {home_team} and {away_team} ===")
-    home_stats, away_stats = get_match_stats(home_team, away_team, competition)
+    home_stats, away_stats = get_match_stats(home_team, away_team, competition, competitionId)
     
     #print(f"\n=== DEBUG: Raw home_stats ===\n{home_stats}")
     #print(f"\n=== DEBUG: Raw away_stats ===\n{away_stats}")
@@ -79,10 +80,10 @@ def get_team_form_data(home_team: str, away_team: str, competition: str = COMPET
     
     return home_form, away_form
 
-def get_head_to_head_data(home_team: str, away_team: str) -> Dict:
+def get_head_to_head_data(home_team: str, away_team: str, competition: str, competitionId: int) -> Dict:
     """Get head-to-head statistics"""
     print(f"\nFetching head-to-head data for {home_team} vs {away_team}...")
-    h2h_stats = get_head_to_head(home_team, away_team)
+    h2h_stats = get_head_to_head(home_team, away_team, competition, competitionId)
     
     print(f"\n=== DEBUG: Raw h2h_stats ===\n{h2h_stats}")
     
@@ -103,13 +104,13 @@ def get_head_to_head_data(home_team: str, away_team: str) -> Dict:
 
 def get_goal_difference_data(home_team: str, away_team: str, 
                            season: int = SEASON, 
-                           competition: str = COMPETITION) -> Tuple[Dict, Dict]:
+                           competition: str = COMPETITION, competitionId: int = 2021) -> Tuple[Dict, Dict]:
     """Get goal difference data for both teams"""
     print(f"\nFetching goal difference data for {season-1}-{season} season...")
     
     try:
         home_gd, away_gd = get_teams_goal_difference(
-            competition, season, home_team, away_team
+            competition, season, home_team, away_team, competitionId
         )
         
         #print(f"\n=== DEBUG: Raw home_gd ===\n{home_gd}")
@@ -262,16 +263,17 @@ def predict_match(home_team: str, away_team: str, competition: str = COMPETITION
     """Predict match outcome using all available data"""
     try:
         print(f"\n=== Starting prediction for {home_team} vs {away_team} ===")
-        
+
+        competitionId = get_competition_id(competition)
         # Get all required data
         print("Fetching team form data...")
-        home_form, away_form = get_team_form_data(home_team, away_team, competition)
+        home_form, away_form = get_team_form_data(home_team, away_team, competition, competitionId)
         
         print("Fetching head-to-head data...")
-        h2h_stats = get_head_to_head_data(home_team, away_team)
+        h2h_stats = get_head_to_head_data(home_team, away_team, competition, competitionId)
         
         print("Fetching goal difference data...")
-        home_gd, away_gd = get_goal_difference_data(home_team, away_team, season, competition)
+        home_gd, away_gd = get_goal_difference_data(home_team, away_team, season, competition, competitionId)
         
         # Prepare features
         print("Preparing features...")
@@ -340,8 +342,8 @@ def predict_match(home_team: str, away_team: str, competition: str = COMPETITION
         
         # If model prediction is available, blend it with xG-based prediction
         if prediction is not None:
-            xg_weight = 0.6  # Weight for xG-based prediction
-            model_weight = 0.4  # Weight for model prediction
+            xg_weight = 0.3  # Weight for xG-based prediction
+            model_weight = 0.7  # Weight for model prediction
             
             home_win_prob = (home_win_prob * xg_weight) + (prediction[0] * model_weight)
             draw_prob = (draw_prob * xg_weight) + (prediction[1] * model_weight)
@@ -441,6 +443,38 @@ def show_similar_matches(home_team: str, away_team: str, competition: str, limit
         
     except Exception as e:
         print(f"\nCould not retrieve similar matches: {e}")
+
+def get_competition_id(competition_code: str) -> Optional[int]:
+    """
+    Get the competition ID for a given competition code.
+    
+    Args:
+        competition_code: The competition code (e.g., 'PL' for Premier League)
+        
+    Returns:
+        int: The competition ID if found, None otherwise
+    """
+    if not competition_code:
+        return None
+        
+    try:
+        url = f"{BASE_URL}competitions"
+        response = requests.get(url, headers=HEADERS)
+        response.raise_for_status()
+        
+        competitions = response.json().get('competitions', [])
+        
+        for comp in competitions:
+            if str(comp.get('code', '')).upper() == str(competition_code).upper():
+                return comp.get('id')
+                
+        print(f"No competition found with code: {competition_code}")
+        return None
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching competitions: {e}")
+        return None
+
 
 def main():
     """Main function to run the football match prediction system"""
