@@ -3,7 +3,7 @@ from typing import Dict, Tuple, Optional
 import requests
 #from dotenv import load_dotenv
 from config import (
-   API_KEY, BASE_URL, HEADERS
+   API_KEY, BASE_URL, HEADERS, safe_request
 )
 
 
@@ -33,14 +33,14 @@ def get_team_goal_differences(competition_code: str, season: int, competitionId:
     print(f"With params: {params}")
     
     try:
-        response = requests.get(matches_url, headers=HEADERS, params=params)
+        data = safe_request(matches_url, params=params)
         #print(f"Response status: {response.status_code}")
         
-        if response.status_code != 200:
-            print(f"Error fetching matches: {response.text}")
-            return {}
+        # if response.status_code != 200:
+        #     print(f"Error fetching matches: {response.text}")
+        #     return {}
             
-        data = response.json()
+        #data = response.json()
         #print(f"Raw response received. Found {len(data.get('matches', []))} matches.")
         
         # Initialize team stats

@@ -21,7 +21,7 @@ import seaborn as sns
 # Local imports
 from config import (
     DEFAULT_COMPETITION, CURRENT_SEASON,
-    normalize_team_name, safe_request, get_competition_id, API_KEY, BASE_URL, HEADERS
+    normalize_team_name, safe_request, get_competition_id, get_team_name, API_KEY, BASE_URL, HEADERS
 )
 from fetch_match_stats import get_match_stats, analyze_matches
 from fetch_head_to_head import get_head_to_head
@@ -509,8 +509,15 @@ def main():
                     season = SEASON
             else:
                 season = SEASON
-            
+
+            #Lets create a function that returns home_team and away_team based on similarity
+            #use the get_team_name function to get the team name
+            home_team = get_team_name(home_team,competition)
+            away_team = get_team_name(away_team,competition)
+
             print(f"\nAnalyzing {home_team} vs {away_team}...")
+
+
             
             # Get prediction
             prediction = predict_match(home_team, away_team, competition, season)

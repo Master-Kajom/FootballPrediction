@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from typing import Dict, Tuple, Optional
 import requests
 import time
+from difflib import SequenceMatcher
 
 # Load environment variables
 load_dotenv()
@@ -134,6 +135,91 @@ def get_competition_id(competition_code: str) -> Optional[int]:
     except requests.exceptions.RequestException as e:
         print(f"Error fetching competitions: {e}")
         return None
+
+def get_team_name(team_name: str, competition_code: str = 'PL') -> Optional[str]:
+    """Resolve a team name using fuzzy similarity against official names in the given competition, then globally.
+
+    Returns the official team name (e.g., 'Manchester United FC') if a sufficiently close match is found.
+    """
+    def similarity(a: str, b: str) -> float:
+        return SequenceMatcher(None, a.casefold(), b.casefold()).ratio()
+
+    def best_match(target: str, teams_payload: dict) -> Optional[str]:
+        if not teams_payload or 'teams' not in teams_payload:
+            return None
+
+        def tokenize(s: str) -> set:
+            return set((s or '').lower().replace('fc', '').replace('afc', '').replace('.', '').split())
+
+        def score_alias(target: str, alias: str) -> float:
+            # Base similarity
+            base = similarity(target, alias)
+            # Token-aware adjustments
+            t_tokens = tokenize(target)
+            a_tokens = tokenize(alias)
+            bonus = 0.0
+            # Boost if all target tokens are contained in alias
+            if t_tokens and t_tokens.issubset(a_tokens):
+                bonus += 0.15
+            # Penalize confusing club identifiers if they don't match
+            has_united_t = 'united' in t_tokens
+            has_city_t = 'city' in t_tokens
+            has_united_a = 'united' in a_tokens
+            has_city_a = 'city' in a_tokens
+            if has_united_t and has_city_a and not has_city_t:
+                bonus -= 0.25
+            if has_city_t and has_united_a and not has_united_t:
+                bonus -= 0.25
+            # Prefer exact start/word match (e.g., alias startswith target)
+            alias_l = alias.lower()
+            target_l = target.lower()
+            if alias_l.startswith(target_l) or target_l in alias_l.split():
+                bonus += 0.1
+            # Clamp score to [0,1]
+            return max(0.0, min(1.0, base + bonus))
+
+        best_name = None
+        best_score = 0.0
+        t = (target or '').strip()
+        for team in teams_payload.get('teams', []):
+            aliases = [team.get('name'), team.get('shortName'), team.get('tla')]
+            aliases = [x for x in aliases if isinstance(x, str) and x.strip()]
+            if not aliases:
+                continue
+            score = max(score_alias(t, alias) for alias in aliases)
+            if score > best_score:
+                best_score = score
+                best_name = team.get('name')
+        # Require a reasonable threshold to avoid wrong mappings
+        return best_name if best_score >= 0.65 else None
+
+    try:
+        # 1) Try inside the specified competition
+        if competition_code:
+            comp_teams_url = f"{BASE_URL}competitions/{competition_code}/teams"
+            data = safe_request(comp_teams_url)
+            match = best_match(team_name, data)
+            if match:
+                return match
+
+        # 2) Fallback to global teams search from API
+        search_url = f"{BASE_URL}teams?name={team_name}"
+        data = safe_request(search_url)
+        match = best_match(team_name, data)
+        if match:
+            return match
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching team name: {e}")
+        return None
+
+    # 3) Fallback to normalized mapping if available
+    normalized = TEAM_NAME_MAPPING.get(team_name)
+    if normalized:
+        return normalized
+
+    # 4) Final fallback: return the original (caller may handle None differently)
+    return team_name
 
 def get_team_id(team_name: str, competition_code: str = 'PL', competitionId: int = 2021) -> Optional[int]:
     """Get team ID by name using competition-based search first"""
