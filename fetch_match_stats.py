@@ -17,17 +17,19 @@ def get_team_matches(team_id, status='FINISHED', limit=10, competitionId: int = 
         'competitions': competitionId,
         'dateFrom': '2025-03-01',
         'dateTo': '2025-09-27',
+        'status': 'FINISHED',  # ensure only completed matches are returned
         #'limit': 15
     }
     print(f"=== DEBUG: Request params: {params} ===")
     
     try:
-        response = requests.get(url, headers=HEADERS, params=params)
-        #print(f"=== DEBUG: Response status code: {response.status_code} ===")
-        response.raise_for_status()
-        matches = response.json()
+        #use safe_request
+        matches = safe_request(url, params=params)
+        if not matches or not isinstance(matches, dict):
+            print("=== DEBUG: No matches payload or malformed response from API ===")
+            return []
         #print(f"=== DEBUG: Raw matches response: ===\n{matches}")
-        return matches.get('matches', [])
+        return matches.get('matches', []) or []
     except requests.exceptions.RequestException as e:
         print(f"Error fetching matches: {e}")
         if hasattr(e, 'response') and e.response is not None:
@@ -59,6 +61,9 @@ def analyze_matches(matches, team_id, is_home_team=True):
 
     count = 0
     for match in matches_sorted:
+        # Only consider finished matches
+        if match.get('status') and match.get('status') != 'FINISHED':
+            continue
         team_is_home = match.get('homeTeam', {}).get('id') == team_id
 
         # Venue filter: include only home or away depending on is_home_team
@@ -69,8 +74,9 @@ def analyze_matches(matches, team_id, is_home_team=True):
 
         # Get scores safely
         full_time = match.get('score', {}).get('fullTime', {})
-        home_goals = full_time.get('home', 0)
-        away_goals = full_time.get('away', 0)
+        # Coerce None to 0 to avoid NoneType comparisons
+        home_goals = full_time.get('home', 0) or 0
+        away_goals = full_time.get('away', 0) or 0
 
         if team_is_home:
             goals_for = home_goals
