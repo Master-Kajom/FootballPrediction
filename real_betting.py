@@ -6,7 +6,6 @@ import tensorflow as tf
 from datetime import datetime
 from typing import Dict, Tuple, Optional
 import math
-import requests
 
 # ML and Data Processing
 from sklearn.preprocessing import MinMaxScaler
@@ -22,7 +21,7 @@ import seaborn as sns
 # Local imports
 from config import (
     DEFAULT_COMPETITION, CURRENT_SEASON,
-    normalize_team_name, safe_request, API_KEY, BASE_URL, HEADERS
+    normalize_team_name, safe_request, get_competition_id, API_KEY, BASE_URL, HEADERS
 )
 from fetch_match_stats import get_match_stats, analyze_matches
 from fetch_head_to_head import get_head_to_head
@@ -289,6 +288,10 @@ def predict_match(home_team: str, away_team: str, competition: str = COMPETITION
         # Calculate expected goals (improved calculation)
         LEAGUE_AVG_GOALS = 1.5
         HOME_ADVANTAGE = 0.3
+        FORM_INFLUENCE = 0.25     # influence of recent form (0-1)
+        H2H_INFLUENCE = 0.30      # influence of venue-specific head-to-head (0-1)
+        GD_INFLUENCE = 0.20       # influence of goal-difference delta (0-1)
+        USE_MODEL = False         # disable model blending until a real trained model is available
         
         # Calculate team strengths relative to league average
         home_attack = (home_form.get('avg_goals_scored', 1.0) / max(LEAGUE_AVG_GOALS, 0.1))  # Avoid division by zero
@@ -296,19 +299,49 @@ def predict_match(home_team: str, away_team: str, competition: str = COMPETITION
         away_attack = (away_form.get('avg_goals_scored', 1.0) / max(LEAGUE_AVG_GOALS, 0.1))
         away_defense = (away_form.get('avg_goals_conceded', 1.0) / max(LEAGUE_AVG_GOALS, 0.1))
         
-        # Base xG calculation with team strengths and home advantage
-        home_xg = (home_attack * away_defense * LEAGUE_AVG_GOALS) + HOME_ADVANTAGE
-        away_xg = (away_attack * home_defense * LEAGUE_AVG_GOALS) - (HOME_ADVANTAGE * 0.5)
+        # Base xG calculation with team strengths (before home advantage)
+        home_xg_before_ha = home_attack * away_defense * LEAGUE_AVG_GOALS
+        away_xg_before_ha = away_attack * home_defense * LEAGUE_AVG_GOALS
+        
+        print(f"\nExpected Goals (xG) before home advantage:")
+        print(f"{home_team}: {home_xg_before_ha:.2f}")
+        print(f"{away_team}: {away_xg_before_ha:.2f}")
+        
+        # Apply home advantage
+        home_xg = home_xg_before_ha + HOME_ADVANTAGE
+        away_xg = away_xg_before_ha - (HOME_ADVANTAGE * 0.5)
+        
+        print(f"\nExpected Goals (xG) after home advantage (HA = {HOME_ADVANTAGE}):")
+        print(f"{home_team}: {home_xg:.2f} (base {home_xg_before_ha:.2f} + {HOME_ADVANTAGE} HA)")
+        print(f"{away_team}: {away_xg:.2f} (base {away_xg_before_ha:.2f} - {HOME_ADVANTAGE*0.5:.2f} HA)")
         
         # Apply form influence (recent 5 matches)
-        form_influence = 0.25  # Increased influence of recent form
-        home_xg *= (1 + (home_form.get('form_avg', 0.5) - 0.5) * form_influence)
-        away_xg *= (1 + (away_form.get('form_avg', 0.5) - 0.5) * form_influence)
+        home_form_delta = (home_form.get('form_avg', 0.5) - 0.5)
+        away_form_delta = (away_form.get('form_avg', 0.5) - 0.5)
+        home_xg *= (1 + home_form_delta * FORM_INFLUENCE)
+        away_xg *= (1 + away_form_delta * FORM_INFLUENCE)
+        print(f"\nApplied form influence (FORM_INFLUENCE = {FORM_INFLUENCE}):")
+        print(f"{home_team} xG after form: {home_xg:.2f} (delta {home_form_delta:+.2f})")
+        print(f"{away_team} xG after form: {away_xg:.2f} (delta {away_form_delta:+.2f})")
         
-        # Apply H2H influence (up to 30% adjustment based on H2H performance)
-        h2h_influence = 0.3  # Increased H2H influence
-        home_xg *= (1 + (h2h_stats.get(f'{home_team.lower().replace(" ", "_").replace("_fc", "").replace("_afc", "")}_home_h2h_avg', 0.5) - 0.5) * h2h_influence)
-        away_xg *= (1 + (h2h_stats.get(f'{away_team.lower().replace(" ", "_").replace("_fc", "").replace("_afc", "")}_away_h2h_avg', 0.5) - 0.5) * h2h_influence)
+        # Apply H2H influence (venue-specific)
+        home_h2h_avg = h2h_stats.get(f'{home_team.lower().replace(" ", "_").replace("_fc", "").replace("_afc", "")}_home_h2h_avg', 0.5)
+        away_h2h_avg = h2h_stats.get(f'{away_team.lower().replace(" ", "_").replace("_fc", "").replace("_afc", "")}_away_h2h_avg', 0.5)
+        home_h2h_delta = home_h2h_avg - 0.5
+        away_h2h_delta = away_h2h_avg - 0.5
+        home_xg *= (1 + home_h2h_delta * H2H_INFLUENCE)
+        away_xg *= (1 + away_h2h_delta * H2H_INFLUENCE)
+        print(f"\nApplied H2H influence (H2H_INFLUENCE = {H2H_INFLUENCE}):")
+        print(f"{home_team} xG after H2H: {home_xg:.2f} (delta {home_h2h_delta:+.2f}, avg {home_h2h_avg:.2f})")
+        print(f"{away_team} xG after H2H: {away_xg:.2f} (delta {away_h2h_delta:+.2f}, avg {away_h2h_avg:.2f})")
+
+        # Apply Goal Difference influence using normalized GD delta
+        gd_delta = home_gd.get('normalized', 0.5) - away_gd.get('normalized', 0.5)
+        home_xg *= (1 + gd_delta * GD_INFLUENCE)
+        away_xg *= (1 - gd_delta * GD_INFLUENCE)
+        print(f"\nApplied Goal Difference influence (GD_INFLUENCE = {GD_INFLUENCE}, delta = {gd_delta:+.2f}):")
+        print(f"{home_team} xG after GD: {home_xg:.2f}")
+        print(f"{away_team} xG after GD: {away_xg:.2f}")
         
         # Ensure xG stays within reasonable bounds
         home_xg = max(0.1, min(4.0, home_xg))
@@ -341,10 +374,10 @@ def predict_match(home_team: str, away_team: str, competition: str = COMPETITION
             away_win_prob /= total
         
         # If model prediction is available, blend it with xG-based prediction
-        if prediction is not None:
-            xg_weight = 0.3  # Weight for xG-based prediction
-            model_weight = 0.7  # Weight for model prediction
-            
+        if prediction is not None and USE_MODEL:
+            xg_weight = 0.8  # prioritize xG until a proper model is trained
+            model_weight = 0.2
+            print(f"\nBlending xG with model (xg_weight={xg_weight}, model_weight={model_weight})")
             home_win_prob = (home_win_prob * xg_weight) + (prediction[0] * model_weight)
             draw_prob = (draw_prob * xg_weight) + (prediction[1] * model_weight)
             away_win_prob = (away_win_prob * xg_weight) + (prediction[2] * model_weight)
@@ -444,36 +477,7 @@ def show_similar_matches(home_team: str, away_team: str, competition: str, limit
     except Exception as e:
         print(f"\nCould not retrieve similar matches: {e}")
 
-def get_competition_id(competition_code: str) -> Optional[int]:
-    """
-    Get the competition ID for a given competition code.
-    
-    Args:
-        competition_code: The competition code (e.g., 'PL' for Premier League)
-        
-    Returns:
-        int: The competition ID if found, None otherwise
-    """
-    if not competition_code:
-        return None
-        
-    try:
-        url = f"{BASE_URL}competitions"
-        response = requests.get(url, headers=HEADERS)
-        response.raise_for_status()
-        
-        competitions = response.json().get('competitions', [])
-        
-        for comp in competitions:
-            if str(comp.get('code', '')).upper() == str(competition_code).upper():
-                return comp.get('id')
-                
-        print(f"No competition found with code: {competition_code}")
-        return None
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching competitions: {e}")
-        return None
+
 
 
 def main():

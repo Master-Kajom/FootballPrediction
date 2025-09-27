@@ -4,73 +4,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import time
 import traceback
-
-# Configuration
-API_KEY = '0eabd7aff1954618968f10525f1c1c1d'
-BASE_URL = 'https://api.football-data.org/v4/'
-HEADERS = {'X-Auth-Token': API_KEY}
-
-def safe_request(url: str, max_retries: int = 3, params: dict = None) -> Optional[dict]:
-    """Make a rate-limited request with retries"""
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, headers=HEADERS, params=params)
-            
-            # Check rate limits
-            if 'X-Requests-Available' in response.headers:
-                remaining = int(response.headers['X-Requests-Available'])
-                if remaining < 3:  # Leave buffer
-                    wait_time = 60  # Default wait time in seconds
-                    if 'Retry-After' in response.headers:
-                        wait_time = int(response.headers['Retry-After'])
-                    print(f"Approaching rate limit. Waiting {wait_time} seconds...")
-                    time.sleep(wait_time)
-                    continue
-            
-            response.raise_for_status()
-            return response.json()
-            
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:  # Rate limited
-                retry_after = int(e.response.headers.get('Retry-After', 60))
-                print(f"Rate limited. Waiting {retry_after} seconds...")
-                time.sleep(retry_after)
-                continue
-            print(f"HTTP Error: {e}")
-            return None
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-                continue
-            return None
-    
-    return None
-
-def get_team_id(team_name: str, competition_code: str = 'PL') -> Optional[int]:
-    """Get team ID by name using competition-based search first"""
-    # Try to find in specified competition first (e.g., PL for Premier League)
-    if competition_code:
-        comp_teams_url = f"{BASE_URL}competitions/{competition_code}/teams"
-        data = safe_request(comp_teams_url)
-        
-        if data and 'teams' in data:
-            for team in data['teams']:
-                if team['name'].lower() == team_name.lower():
-                    return team['id']
-    
-    # If not found in specified competition, try direct search
-    search_url = f"{BASE_URL}teams?name={team_name}"
-    data = safe_request(search_url)
-    
-    if data and 'teams' in data and data['teams']:
-        for team in data['teams']:
-            if team['name'].lower() == team_name.lower():
-                return team['id']
-    
-    print(f"Team '{team_name}' not found in competition '{competition_code}' or general search.")
-    return None
+from config import (
+    DEFAULT_COMPETITION, CURRENT_SEASON,
+    normalize_team_name, safe_request, get_competition_id, get_team_id, API_KEY, BASE_URL, HEADERS
+)
 
 
 def get_head_to_head(home_team: str, away_team: str, competition: str,competitionId: int) -> Dict:
@@ -97,7 +34,7 @@ def get_head_to_head(home_team: str, away_team: str, competition: str,competitio
         recent_matches_url = f"{BASE_URL}teams/{home_id}/matches"
         params = {
             'dateFrom': '2024-01-01',
-            'dateTo': '2025-08-29'
+            'dateTo': '2025-09-27'
         }
         
         print(f"Requesting URL: {recent_matches_url}")
@@ -125,8 +62,8 @@ def get_head_to_head(home_team: str, away_team: str, competition: str,competitio
         print("\n=== DEBUG: Getting head-to-head data ===")
         h2h_url = f"{BASE_URL}matches/{match_id}/head2head"
         h2h_params = {
-            'limit': 10,
-            'competitions': competitionId #get_competition_id(competition)  # Get last 10 meetings
+            'limit': 50,  # fetch more to allow venue filtering down to last 7
+            'competitions': competitionId  # restrict to competition
         }
         
         print(f"Requesting URL: {h2h_url}")
@@ -166,48 +103,58 @@ def get_head_to_head(home_team: str, away_team: str, competition: str,competitio
             print("No matches found in head-to-head data")
             return result
             
-        # Process each match
-        home_results = []
-        away_results = []
-        
-        for match in matches:
-            home_team_match = match.get('homeTeam', {}).get('name', '').lower()
-            away_team_match = match.get('awayTeam', {}).get('name', '').lower()
+        # Sort matches by date descending to take most recent first
+        matches_sorted = sorted(matches, key=lambda m: m.get('utcDate', ''), reverse=True)
+
+        # Filter to venue-specific H2H
+        home_home_results = []  # home team playing at home vs this opponent
+        away_away_results = []  # away team playing away vs this opponent
+
+        for match in matches_sorted:
+            m_home = match.get('homeTeam', {})
+            m_away = match.get('awayTeam', {})
+            home_team_match = m_home.get('name', '')
+            away_team_match = m_away.get('name', '')
             score = match.get('score', {})
-            
-            if not all([home_team_match, away_team_match, score]):
-                continue
-                
-            # Determine if home team in this match is our home team
-            is_home_match = (home_team_match == home_team.lower())
             winner = score.get('winner')
-            
-            if winner == 'DRAW':
-                home_results.append(0.5)
-                away_results.append(0.5)
-            elif winner == 'HOME_TEAM':
-                if is_home_match:
-                    home_results.append(1.0)  # Our home team won at home
-                    away_results.append(0.0)
-                else:
-                    away_results.append(1.0)  # Our away team won at home
-                    home_results.append(0.0)
-            elif winner == 'AWAY_TEAM':
-                if is_home_match:
-                    home_results.append(0.0)  # Our home team lost at home
-                    away_results.append(1.0)
-                else:
-                    away_results.append(0.0)  # Our away team lost away
-                    home_results.append(1.0)
-        
-        # Calculate averages
-        if home_results:
-            result[f"{home_team_key}_home_h2h"] = home_results
-            result[f"{home_team_key}_home_h2h_avg"] = sum(home_results) / len(home_results)
-            
-        if away_results:
-            result[f"{away_team_key}_away_h2h"] = away_results
-            result[f"{away_team_key}_away_h2h_avg"] = sum(away_results) / len(away_results)
+
+            if not all([home_team_match, away_team_match, winner]):
+                continue
+
+            # Case 1: home team at home vs away team
+            if home_team_match.lower() == home_team.lower() and away_team_match.lower() == away_team.lower():
+                if winner == 'DRAW':
+                    home_home_results.append(0.5)
+                elif winner == 'HOME_TEAM':
+                    home_home_results.append(1.0)
+                elif winner == 'AWAY_TEAM':
+                    home_home_results.append(0.0)
+
+            # Case 2: away team away vs home team
+            if away_team_match.lower() == away_team.lower() and home_team_match.lower() == home_team.lower():
+                if winner == 'DRAW':
+                    away_away_results.append(0.5)
+                elif winner == 'AWAY_TEAM':
+                    away_away_results.append(1.0)
+                elif winner == 'HOME_TEAM':
+                    away_away_results.append(0.0)
+
+            # Stop if we have enough for both
+            if len(home_home_results) >= 7 and len(away_away_results) >= 7:
+                break
+
+        # Trim to last 7 (already in most-recent-first order)
+        home_home_results = home_home_results[:5]
+        away_away_results = away_away_results[:5]
+
+        # Calculate venue-specific averages
+        if home_home_results:
+            result[f"{home_team_key}_home_h2h"] = home_home_results
+            result[f"{home_team_key}_home_h2h_avg"] = sum(home_home_results) / len(home_home_results)
+
+        if away_away_results:
+            result[f"{away_team_key}_away_h2h"] = away_away_results
+            result[f"{away_team_key}_away_h2h_avg"] = sum(away_away_results) / len(away_away_results)
         
         return result
         

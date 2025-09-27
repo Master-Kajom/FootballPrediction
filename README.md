@@ -47,7 +47,7 @@ A machine learning-based system for predicting football match outcomes using tea
 
 1. Run the prediction system:
    ```bash
-   python betting.py
+   python real_betting.py
    ```
 
 2. Follow the on-screen prompts to enter the match details:

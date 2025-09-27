@@ -1,76 +1,13 @@
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-import time
 from typing import Optional
 import numpy as np
+from config import (
+    DEFAULT_COMPETITION, CURRENT_SEASON,
+    normalize_team_name, safe_request, get_competition_id, get_team_id, API_KEY, BASE_URL, HEADERS
+)
 
-# Configuration
-API_KEY = '0eabd7aff1954618968f10525f1c1c1d'  # Replace with your actual API key from football-data.org
-BASE_URL = 'https://api.football-data.org/v4/'
-HEADERS = {'X-Auth-Token': API_KEY}
-
-def safe_request(url: str, max_retries: int = 3) -> Optional[dict]:
-    """Make a rate-limited request with retries"""
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, headers=HEADERS)
-            
-            # Check rate limits
-            if 'X-Requests-Available' in response.headers:
-                remaining = int(response.headers['X-Requests-Available'])
-                if remaining < 3:  # Leave buffer
-                    wait_time = 60  # Default wait time in seconds
-                    if 'Retry-After' in response.headers:
-                        wait_time = int(response.headers['Retry-After'])
-                    print(f"Approaching rate limit. Waiting {wait_time} seconds...")
-                    time.sleep(wait_time)
-                    continue
-            
-            response.raise_for_status()
-            return response.json()
-            
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:  # Rate limited
-                retry_after = int(e.response.headers.get('Retry-After', 60))
-                print(f"Rate limited. Waiting {retry_after} seconds...")
-                time.sleep(retry_after)
-                continue
-            print(f"HTTP Error: {e}")
-            return None
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-                continue
-            return None
-    
-    return None
-
-def get_team_id(team_name: str, competition_code: str = 'PL', competitionId: int = 2021) -> Optional[int]:
-    """Get team ID by name using competition-based search first"""
-    # Try to find in specified competition first (e.g., PL for Premier League)
-    if competition_code:
-        comp_teams_url = f"{BASE_URL}competitions/{competition_code}/teams"
-        data = safe_request(comp_teams_url)
-        
-        if data and 'teams' in data:
-            for team in data['teams']:
-                if team['name'].lower() == team_name.lower():
-                    return team['id']
-    
-    # If not found in specified competition, try direct search
-    search_url = f"{BASE_URL}teams?name={team_name}"
-    data = safe_request(search_url)
-    
-    if data and 'teams' in data and data['teams']:
-        for team in data['teams']:
-            if team['name'].lower() == team_name.lower():
-                return team['id']
-    
-    print(f"Team '{team_name}' not found in competition '{competition_code}' or general search.")
-    return None
 
 def get_team_matches(team_id, status='FINISHED', limit=10, competitionId: int = 2021):
     """Get recent matches for a team"""
@@ -79,7 +16,7 @@ def get_team_matches(team_id, status='FINISHED', limit=10, competitionId: int = 
     params = {
         'competitions': competitionId,
         'dateFrom': '2025-03-01',
-        'dateTo': '2025-08-29',
+        'dateTo': '2025-09-27',
         #'limit': 15
     }
     print(f"=== DEBUG: Request params: {params} ===")
@@ -98,56 +35,75 @@ def get_team_matches(team_id, status='FINISHED', limit=10, competitionId: int = 
         return []
 
 def analyze_matches(matches, team_id, is_home_team=True):
-    """Analyze match statistics for a team, separating home and away stats"""
+    """Analyze match statistics for a team, filtering by venue and limiting to last 15.
+    - If is_home_team is True: only include matches where the team played at home.
+    - If is_home_team is False: only include matches where the team played away.
+    - Use the 15 most recent matches for the specified venue.
+    """
     print(f"\n=== DEBUG: Analyzing matches for team_id: {team_id} (is_home_team: {is_home_team}) ===")
-    print(f"=== DEBUG: Number of matches to analyze: {len(matches) if matches else 0} ===")
+    print(f"=== DEBUG: Number of matches fetched (pre-filter): {len(matches) if matches else 0} ===")
     
     stats = {
         'goals_scored': [],
         'goals_conceded': [],
-        'results': []  # 1=Win, 0.5=Draw, 0=Loss
+        'results': [],  # 1=Win, 0.5=Draw, 0=Loss
+        'opponents': []
     }
-    
-    for match in matches:
-        # print(f"\n=== DEBUG: Processing match ===")
-        # print(f"Match ID: {match.get('id')}")
-        # print(f"Home Team: {match.get('homeTeam', {}).get('name')} (ID: {match.get('homeTeam', {}).get('id')})")
-        # print(f"Away Team: {match.get('awayTeam', {}).get('name')} (ID: {match.get('awayTeam', {}).get('id')})")
-        # print(f"Score: {match.get('score', {}).get('fullTime', {})}")
-        
-        team_is_home = match['homeTeam']['id'] == team_id
-        opponent_is_home = not team_is_home
-        
-        # Get scores
-        home_goals = match['score']['fullTime'].get('home', 0)
-        away_goals = match['score']['fullTime'].get('away', 0)
-        
-        # Determine if this is a home or away match for our team
+
+    if not matches:
+        print("=== DEBUG: No matches provided to analyze ===")
+        return stats
+
+    # Sort by utcDate descending to get most recent first (ISO strings sort lexicographically)
+    matches_sorted = sorted(matches, key=lambda m: m.get('utcDate', ''), reverse=True)
+
+    count = 0
+    for match in matches_sorted:
+        team_is_home = match.get('homeTeam', {}).get('id') == team_id
+
+        # Venue filter: include only home or away depending on is_home_team
+        if is_home_team and not team_is_home:
+            continue
+        if not is_home_team and team_is_home:
+            continue
+
+        # Get scores safely
+        full_time = match.get('score', {}).get('fullTime', {})
+        home_goals = full_time.get('home', 0)
+        away_goals = full_time.get('away', 0)
+
         if team_is_home:
             goals_for = home_goals
             goals_against = away_goals
         else:
             goals_for = away_goals
             goals_against = home_goals
-        
+
         # Calculate result (1=Win, 0.5=Draw, 0=Loss)
         if goals_for > goals_against:
-            result = 1.0  # Win
+            result = 1.0
         elif goals_for == goals_against:
-            result = 0.5  # Draw
+            result = 0.5
         else:
-            result = 0.0  # Loss
-            
-        #print(f"Team goals: {goals_for}, Opponent goals: {goals_against}, Result: {result}")
-        
+            result = 0.0
+
         stats['goals_scored'].append(goals_for)
         stats['goals_conceded'].append(goals_against)
         stats['results'].append(result)
-    
-    print(f"\n=== DEBUG: Final stats for team_id {team_id} ===")
+        opponent_name = (
+            match.get('awayTeam', {}).get('name') if team_is_home else match.get('homeTeam', {}).get('name')
+        )
+        stats['opponents'].append(opponent_name)
+
+        count += 1
+        if count >= 15:
+            break
+
+    print(f"\n=== DEBUG: Final stats for team_id {team_id} (venue-filtered, last {count}) ===")
     print(f"Goals scored: {stats['goals_scored']}")
     print(f"Goals conceded: {stats['goals_conceded']}")
     print(f"Results: {stats['results']}")
+    print(f"Opponents: {stats['opponents']}")
     print(f"Average goals scored: {np.mean(stats['goals_scored']) if stats['goals_scored'] else 0:.2f}")
     print(f"Average goals conceded: {np.mean(stats['goals_conceded']) if stats['goals_conceded'] else 0:.2f}")
     print(f"Form average: {np.mean(stats['results']) if stats['results'] else 0.5:.2f}")
@@ -190,6 +146,7 @@ def format_stats(home_team, away_team, home_stats, away_stats):
     output = f"""--- {home_team} vs {away_team} Statistics ---
 
 {home_team} (Last 5 home matches):
+  • Opponents: {home_stats.get('opponents', [])}
   • Goals Scored: {home_stats['goals_scored']}
   • Goals Conceded: {home_stats['goals_conceded']}
   • Results: {['Win' if x == 1 else 'Draw' if x == 0.5 else 'Loss' for x in home_stats['results']]}
@@ -197,6 +154,7 @@ def format_stats(home_team, away_team, home_stats, away_stats):
   • Avg. Goals Conceded: {home_avg_conceded:.1f}
 
 {away_team} (Last 5 away matches):
+  • Opponents: {away_stats.get('opponents', [])}
   • Goals Scored: {away_stats['goals_scored']}
   • Goals Conceded: {away_stats['goals_conceded']}
   • Results: {['Win' if x == 1 else 'Draw' if x == 0.5 else 'Loss' for x in away_stats['results']]}

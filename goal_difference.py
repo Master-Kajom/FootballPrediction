@@ -2,15 +2,10 @@ import os
 from typing import Dict, Tuple, Optional
 import requests
 #from dotenv import load_dotenv
+from config import (
+   API_KEY, BASE_URL, HEADERS
+)
 
-# Load environment variables
-#load_dotenv()
-
-# Configuration
-#API_KEY = os.getenv('FOOTBALL_DATA_API_KEY')
-API_KEY = '0eabd7aff1954618968f10525f1c1c1d'
-BASE_URL = 'https://api.football-data.org/v4/'
-HEADERS = {'X-Auth-Token': API_KEY}
 
 def get_team_goal_differences(competition_code: str, season: int, competitionId: int) -> Dict[str, Dict[str, int]]:
     """
@@ -30,7 +25,7 @@ def get_team_goal_differences(competition_code: str, season: int, competitionId:
     matches_url = f"{BASE_URL}competitions/{competition_id}/matches"
     params = {
         'dateFrom': '2025-08-01',
-        'dateTo': '2025-08-29',
+        'dateTo': '2025-09-27',
         'status': 'FINISHED'
     }
     
